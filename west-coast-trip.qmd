@@ -1,0 +1,1201 @@
+---
+title: "Mapping my West Coast road trip"
+date: "June 2023"
+format: html
+---
+
+```{r setup}
+library("tidyverse")
+library("tidycensus")
+library("tigris")
+library("sf")
+# library("lwgeom")
+
+options(tigris_use_cache = TRUE)
+```
+
+```{r}
+library("leaflet")
+```
+
+shapefiles I need:
+
+- states: WA, OR, CA
+- places -- get all, subset to the places I actually went
+- are there national park shape files?
+
+## States
+
+```{r}
+states <- states(cb = TRUE)
+```
+
+
+```{r}
+west_coast <- 
+  states %>%
+  filter(STUSPS %in% c("CA", "OR", "WA"))
+```
+
+```{r}
+ggplot(west_coast) +
+  geom_sf() + 
+  coord_sf(crs = 'ESRI:102003') + 
+  theme_minimal()
+```
+
+## Places
+
+```{r}
+west_coast_places <- places(state = c("CA", "OR", "WA"), cb = TRUE)
+```
+
+
+```{r}
+place_names <- 
+  c(
+    "Seattle", 
+    "Vancouver", 
+    "Grants Pass", 
+    "Klamath", # "Requa",
+    "Eureka", 
+    "Healdsburg", 
+    "Guerneville", 
+    "Stinson Beach", 
+    "San Francisco", 
+    "Berkeley", 
+    "Ashland", 
+    "Eugene", 
+    "Portland", 
+    "Olympia"
+  )
+  
+
+trip_places <- 
+  west_coast_places %>%
+  filter(NAME %in% place_names) %>%
+  filter(!(NAME == "Ashland" & STUSPS == "CA"))
+```
+
+
+```{r}
+ggplot(west_coast) +
+  geom_sf(fill = "white") + 
+  geom_sf(data = trip_places) + 
+  ggrepel::geom_text_repel(
+    data = trip_places, 
+    aes(label = NAME, geometry = geometry), 
+    stat = "sf_coordinates",
+    size = 2
+  ) + 
+  coord_sf(
+    crs = 'ESRI:102003'
+  ) + 
+  theme_minimal()
+```
+
+```{r}
+trip_points <- st_centroid(trip_places)
+```
+
+https://github.com/tidyverse/ggplot2/issues/2090
+
+```{r}
+bbox <- st_bbox(west_coast)
+
+ggplot(west_coast) +
+  geom_sf(fill = "white") + 
+  geom_sf(data = trip_points) + 
+  ggrepel::geom_text_repel(
+    data = trip_points, 
+    aes(label = NAME, geometry = geometry), 
+    stat = "sf_coordinates",
+    size = 2, 
+    min.segment.length = 0, 
+    force = 2, 
+    force_pull = .5
+  ) + 
+  coord_sf(
+    xlim = c(bbox$xmin - 5, bbox$xmax)
+  ) + 
+  theme_bw()
+
+```
+
+https://www.r-bloggers.com/2013/02/shapefiles-in-r/
+
+```{r}
+# check the SF centroid since it's a multipolygon
+trip_places %>% 
+  filter(NAME == "San Francisco") %>% 
+  ggplot() + 
+  geom_sf() + 
+  geom_sf(data = filter(trip_points, NAME == "San Francisco"))
+```
+
+
+## Roads
+
+primary + secondary should get everything except the Healdsburg -> Guerneville stretch
+
+```{r}
+# roads()
+# primary_roads()
+ca_roads <- primary_secondary_roads(state = "CA")
+or_roads <- primary_secondary_roads(state = "OR")
+wa_roads <- primary_secondary_roads(state = "WA")
+```
+
+```{r}
+wa_roads %>%
+  filter(FULLNAME == "I- 5") %>%
+  ggplot() + 
+  geom_sf()
+```
+
+
+```{r}
+seattle_pt <- trip_points %>% filter(NAME == "Seattle")
+
+wa_roads_bb <- 
+  wa_roads %>%
+  filter(FULLNAME == "I- 5") %>%
+  st_bbox()
+
+# wish I could refer by name! 
+# this sets ymax = y
+# I write a function to make this easier below
+wa_roads_bb[4] <- st_coordinates(seattle_pt)[2]
+
+wa_roads %>%
+  filter(FULLNAME == "I- 5") %>%
+  st_crop(wa_roads_bb) %>%
+  ggplot() + 
+  geom_sf() +
+  geom_sf(data = seattle_pt)
+
+```
+
+```{r}
+wa_roads_trip <- 
+  wa_roads %>%
+  filter(FULLNAME == "I- 5") %>%
+  st_crop(wa_roads_bb) 
+```
+
+
+```{r}
+or_roads %>%
+  filter(FULLNAME %in% c("US Hwy 199", "I- 5")) %>%
+  ggplot() + 
+  geom_sf()
+```
+
+```{r}
+or_roads_trip <- 
+  or_roads %>%
+  filter(FULLNAME %in% c("US Hwy 199", "I- 5"))
+```
+
+
+```{r}
+ca_roads %>%
+  filter(FULLNAME %in% 
+           c("US Hwy 199",
+             "US Hwy 101",
+             "Redwood Hwy",
+             "State Hwy 254",
+             "River Rd",
+             "Coast Hwy", 
+             "State Rte 1",
+             "I- 80", 
+             "Bay Brg",
+             "Eastshore Fwy",
+             "I- 505",
+             "I- 5", 
+             "I- 5 Scn")
+         ) %>%
+  ggplot() + 
+  geom_sf()
+```
+
+
+```{r}
+#| eval: false
+leaflet(ca_roads) %>%
+  addTiles() %>%
+  addPolylines(label = ~FULLNAME)
+```
+
+
+```{r}
+#| eval: false
+mendo_roads_full <- roads(state = "CA", county = "Mendocino")
+```
+
+Nope, that segment of 101 / Redwood is missing from the full roads map too!
+
+```{r}
+sonoma_roads_full <- roads(state = "CA", county = "Sonoma")
+```
+
+```{r}
+#| eval: false
+leaflet(mendo_roads_full) %>%
+  addTiles() %>%
+  addPolylines(label = ~FULLNAME)
+```
+
+```{r}
+#| eval: false
+leaflet(sonoma_roads_full) %>%
+  addTiles() %>%
+  addPolylines(label = ~FULLNAME)
+```
+
+
+```{r}
+#| eval: false
+sonoma_roads_full %>%
+  filter(FULLNAME %in% c("Westside Rd", "River Rd")) %>%
+  leaflet() %>%
+  addTiles() %>%
+  addPolylines(label = ~FULLNAME)
+```
+
+bbox order: xmin, ymin, xmax, ymax
+
+Is there a logical way to do this?
+
+goal: crop River Rd by Westside Rd
+
+
+```{r}
+sonoma_roads_trip <- 
+  sonoma_roads_full %>%
+  filter(FULLNAME %in% c("Westside Rd", "River Rd")) 
+
+river_rd <- sonoma_roads_trip %>% filter(FULLNAME == "River Rd")
+
+# easiest to filter this one manually...
+westside_rd <- 
+  sonoma_roads_trip %>% 
+  filter(FULLNAME == "Westside Rd", LINEARID == "110860139261")
+
+# xmax = westside_rd min
+# ymax = westside_rd max
+river_rd2 <- 
+  st_crop(river_rd, c(
+    xmin = as.numeric(st_bbox(river_rd)$xmin), 
+    ymin = as.numeric(st_bbox(river_rd)$ymin), 
+    xmax = as.numeric(st_bbox(westside_rd)$xmin), 
+    ymax = as.numeric(st_bbox(westside_rd)$ymax)
+  )) 
+
+bind_rows(westside_rd, river_rd2) %>%
+  ggplot() + 
+  geom_sf()
+
+sonoma_roads_trip2 <- bind_rows(westside_rd, river_rd2)
+```
+
+```{r}
+ca_roads %>%
+  filter(FULLNAME %in% 
+           c("US Hwy 199",
+             "US Hwy 101",
+             "Redwood Hwy",
+             "State Hwy 254",
+             "River Rd",
+             "Coast Hwy", 
+             "State Rte 1",
+             "I- 80", 
+             "Bay Brg",
+             "Eastshore Fwy",
+             "I- 505",
+             "I- 5", 
+             "I- 5 Scn")
+         ) %>%
+  ggplot() + 
+  geom_sf() +
+  facet_wrap(vars(FULLNAME))
+```
+
+
+```{r}
+ca_roads_names <- 
+             c("US Hwy 199",
+             "US Hwy 101",
+             "Redwood Hwy",
+             "State Hwy 254",
+             "River Rd",
+             "Coast Hwy", 
+             "State Rte 1",
+             "I- 80", 
+             "Bay Brg",
+             "Eastshore Fwy",
+             "I- 505",
+             "I- 5", 
+             "I- 5 Scn")
+
+ca_roads_trip <- 
+  ca_roads %>%
+  filter(FULLNAME %in% 
+           c("US Hwy 199",
+             "US Hwy 101",
+             "Redwood Hwy",
+             "State Hwy 254",
+             "River Rd",
+             "Coast Hwy", 
+             "State Rte 1",
+             "I- 80", 
+             "Bay Brg",
+             "Eastshore Fwy",
+             "I- 505",
+             "I- 5", 
+             "I- 5 Scn")
+         )
+```
+
+```{r}
+#| eval: false
+leaflet(ca_roads_trip) %>%
+  addTiles() %>%
+  addPolylines(label = ~FULLNAME)
+```
+
+
+```{r}
+#| eval: false
+leaflet(ca_roads_trip) %>%
+  addTiles() %>%
+  addPolylines(popup = ~LINEARID)
+```
+
+Is there a way to do this programmatically? or is it best to just manually inspect and filter line segments? => I wind up doing this road by road
+
+```{r}
+# connect missing segment
+l1 <- ca_roads_trip %>% filter(LINEARID == "11012815111670")
+l2 <- ca_roads_trip %>% filter(LINEARID == "11010952181852")
+
+ca_roads_trip %>%
+  filter(LINEARID %in% c("11012815111670", "11010952181852")) %>%
+  ggplot() + 
+  geom_sf()
+
+p1 <- 
+  l1 %>% 
+  st_coordinates() %>% 
+  as_tibble() %>%
+  filter(Y == min(Y)) %>%
+  select(-L1) %>%
+  as.matrix() %>%
+  st_point()
+
+p2 <- 
+  l2 %>%
+  st_coordinates() %>% 
+  as_tibble() %>%
+  filter(Y == max(Y)) %>%
+  select(-L1) %>%
+  as.matrix() %>%
+  st_point()
+
+l3 <- st_linestring(c(p1, p2))
+
+
+st_sfc(l3, crs = st_crs(l1)) %>%
+  ggplot() + 
+  geom_sf() +
+  geom_sf(data = l1) + 
+  geom_sf(data = l2)
+
+missing_segment <- st_sfc(l3, crs = st_crs(l1))
+
+ggplot(ca_roads_trip) + 
+  geom_sf() + 
+  geom_sf(data = missing_segment, color = "red")
+```
+
+```{r}
+# bounding boxes
+ca_roads_trip %>%
+  filter(FULLNAME == "US Hwy 199") %>%
+  st_bbox() %>%
+  st_as_sfc() %>%
+  ggplot() + 
+  geom_sf(fill = "transparent")
+```
+
+
+```{r}
+ca_roads_trip %>%
+  group_by(FULLNAME) %>%
+  nest() %>%
+  mutate(bbox = map(data, st_bbox)) %>%
+  mutate(bbox_shape = map(bbox, st_as_sfc, crs = st_crs(ca_roads_trip))) %>% 
+  select(-data) %>%
+  unnest(cols = bbox_shape) %>%
+  ggplot(aes(geometry = bbox_shape)) +
+  geom_sf(fill = "transparent") + 
+  geom_sf(data = ca_roads_trip, aes(geometry = geometry)) + 
+  theme_minimal()
+```
+
+```{r}
+#| eval: false
+# I don't use this...
+ca_roads_bbox <- 
+  ca_roads_trip %>%
+  group_by(FULLNAME) %>%
+  nest() %>%
+  mutate(bbox = map(data, st_bbox)) %>%
+  mutate(bbox_shape = map(bbox, st_as_sfc, crs = st_crs(ca_roads_trip))) %>% 
+  select(-data) %>%
+  unnest(cols = bbox_shape) %>%
+  ungroup() %>%
+  st_as_sf()
+
+```
+
+```{r}
+hwy_101 <- ca_roads_trip %>% filter(FULLNAME == "US Hwy 101")
+hwy_199 <- ca_roads_trip %>% filter(FULLNAME == "US Hwy 199")
+```
+
+
+```{r}
+# helper functions
+get_bbox_val <- function(bbox, val) {
+  purrr::pluck(as.list(bbox), val)
+}
+
+crop_opt <- function(rd, xmin = NULL, ymin  = NULL, xmax  = NULL, ymax = NULL) {
+  
+  bounds <- st_bbox(rd)
+  
+  # this is terrible R code
+  # but for each of the 4 possible arguments
+  # if the argument is null, assigns the value from bounds
+  for (b in names(bounds)) {
+    if (is.null(get(b))) {
+      assign(b, get_bbox_val(bounds, b))
+    }
+  }
+  
+  st_crop(rd, xmin = xmin, ymin = ymin, xmax = xmax, ymax = ymax)
+}
+
+
+crop_opt(hwy_101, ymax = get_bbox_val(st_bbox(hwy_199), "ymin")) %>%
+  ggplot() + 
+  geom_sf()
+```
+
+
+```{r}
+i_5 <- ca_roads_trip %>% filter(FULLNAME == "I- 5")
+i_505 <- ca_roads_trip %>% filter(FULLNAME == "I- 505")
+
+# testing!
+crop_opt(i_5, ymin = get_bbox_val(st_bbox(i_505), "ymax")) %>%
+  ggplot() + 
+  geom_sf(data = i_5, color = "red") + 
+  geom_sf() 
+```
+
+I can do this for individual roads now, how to systematize it? - nest each, with different arguments => nope, easier to do individually.
+
+```{r}
+#| eval: false
+get_bbox_val_from_df <- function(rd, val, d = ca_roads_trip) {
+  ca_roads_trip %>% 
+    filter(FULLNAME == rd) %>%
+    st_bbox() %>%
+    get_bbox_val(val)
+}
+
+
+# map + do.call
+
+ca_roads_trip %>%
+  group_by(FULLNAME) %>%
+  nest()
+```
+
+```{r}
+# make each road an object
+hwy_199 <- ca_roads_trip %>% filter(FULLNAME == "US Hwy 199")
+hwy_101 <- ca_roads_trip %>% filter(FULLNAME == "US Hwy 101")
+redwood <- ca_roads_trip %>% filter(FULLNAME == "Redwood Hwy")
+hwy_254 <- ca_roads_trip %>% filter(FULLNAME == "State Hwy 254")
+# river rd is redundant with sonoma roads
+coast_hwy <- ca_roads_trip %>% filter(FULLNAME == "Coast Hwy")
+rte_1 <- ca_roads_trip %>% filter(FULLNAME == "State Rte 1")
+i_80 <- ca_roads_trip %>% filter(FULLNAME == "I- 80")
+bay_brg <- ca_roads_trip %>% filter(FULLNAME == "Bay Brg")
+eastshore_fwy <- ca_roads_trip %>% filter(FULLNAME == "Eastshore Fwy")
+i_505 <- ca_roads_trip %>% filter(FULLNAME == "I- 505")
+i_5 <- ca_roads_trip %>% filter(FULLNAME == "I- 5")
+i_5_scn <- ca_roads_trip %>% filter(FULLNAME == "I- 5 Scn")
+```
+
+
+```{r}
+ggplot(hwy_199) + 
+  geom_sf() +
+  geom_sf(data = hwy_101, color = "red") + 
+  geom_sf(data = redwood, color = "green") + 
+  geom_sf(data = sonoma_roads_trip2, color = "blue")
+```
+
+```{r}
+hwy_101_trip <- crop_opt(hwy_101, 
+                         ymax = get_bbox_val(st_bbox(hwy_199), "ymin"), 
+                         ymin = get_bbox_val(st_bbox(sonoma_roads_trip2), "ymax"))
+
+redwood_trip <- crop_opt(redwood, 
+                         ymin = get_bbox_val(st_bbox(sonoma_roads_trip2), "ymax"))
+
+
+```
+
+```{r}
+ggplot(hwy_199) + 
+  geom_sf() +
+  geom_sf(data = hwy_101_trip, color = "red") + 
+  geom_sf(data = redwood_trip, color = "green") + 
+  geom_sf(data = sonoma_roads_trip2, color = "blue")
+```
+
+
+```{r}
+sf_pt <- trip_points %>% filter(NAME == "San Francisco")
+```
+
+```{r}
+# coast hwy is redundant!
+ggplot(rte_1) +
+  geom_sf() +
+  # geom_sf(data = coast_hwy, color = "red") + 
+  geom_sf(data = sonoma_roads_trip2, color = "blue") + 
+  geom_sf(data = sf_pt)
+```
+
+
+```{r}
+# doesn't work, because the point doesn't exactly intersect the line
+sonoma_pt <- st_sfc(st_point(st_bbox(sonoma_roads_trip2)[1:2]), 
+                    crs = st_crs(sonoma_roads_trip2))
+
+rte_1_split <- lwgeom::st_split(rte_1, sonoma_pt)
+
+rte_1_trip <- crop_opt(rte_1_split, 
+                       ymin = st_coordinates(sf_pt)[2], 
+                       ymax = get_bbox_val(st_bbox(sonoma_roads_trip2), "ymin"))
+
+ggplot(rte_1_trip) +
+  geom_sf() +
+  geom_sf(data = sonoma_roads_trip2, color = "blue") + 
+  geom_sf(data = sf_pt) + 
+  geom_sf(data = trip_places %>% filter(NAME == "San Francisco"), fill = "transparent") + 
+  geom_sf(data = sonoma_pt) + 
+  geom_hline(yintercept = get_bbox_val(st_bbox(sonoma_roads_trip2), "ymin"))
+
+```
+
+```{r}
+rte_1_trip %>%
+  filter(LINEARID == "1104468778548") %>%
+  ggplot() + 
+  geom_sf() + 
+  geom_sf(data = sonoma_pt) + 
+  geom_hline(yintercept = get_bbox_val(st_bbox(sonoma_roads_trip2), "ymin"))
+```
+
+
+
+```{r}
+#| eval: false
+leaflet(rte_1_trip) %>%
+  addTiles() %>%
+  addPolylines(popup = ~LINEARID) %>%
+  addCircles(data = sonoma_pt) %>%
+  addPolylines(data = sonoma_roads_trip2) %>%
+  addCircles(data = st_intersection(rte_1_trip, sonoma_roads_trip2))
+```
+
+
+https://gis.stackexchange.com/questions/428584/create-point-feature-at-line-intersection-and-split-lines-r
+
+```{r}
+# this works, because this time the point actually intersects
+sonoma_pt2 <- 
+  st_intersection(rte_1_trip, sonoma_roads_trip2) %>%
+  filter(row_number() == 1)
+
+rte_1_trip %>%
+  filter(LINEARID == "1104468778548") %>%
+  lwgeom::st_split(sonoma_pt2) %>%
+  crop_opt(ymax = st_coordinates(sonoma_pt2)[2]) %>%
+  ggplot() + 
+  geom_sf() + 
+  geom_sf(data = sonoma_pt2) + 
+  geom_hline(yintercept = get_bbox_val(st_bbox(sonoma_roads_trip2), "ymin"))
+  
+```
+
+```{r}
+rte_1_trip2 <- 
+  rte_1_trip %>%
+  lwgeom::st_split(sonoma_pt2) %>%
+  crop_opt(ymax = st_coordinates(sonoma_pt2)[2])
+```
+
+
+```{r}
+ggplot(rte_1_trip2) +
+  geom_sf() +
+  geom_sf(data = sonoma_roads_trip2, color = "blue") + 
+  geom_sf(data = sf_pt) + 
+  geom_sf(data = trip_places %>% filter(NAME == "San Francisco"), fill = "transparent") + 
+  geom_sf(data = sonoma_pt2) + 
+  geom_hline(yintercept = get_bbox_val(st_bbox(sonoma_roads_trip2), "ymin"))
+```
+
+Lesson: st_intersects can be more useful than st_bbox! ... if the lines actually intersect.
+
+
+```{r}
+#| eval: false
+leaflet(i_80) %>%
+  addTiles() %>%
+  addPolylines(popup = ~LINEARID)
+  
+```
+
+```{r}
+#| eval: false
+leaflet(bay_brg) %>%
+  addTiles() %>%
+  addPolylines(popup = ~LINEARID)
+```
+
+
+```{r}
+#| eval: false
+leaflet(eastshore_fwy) %>%
+  addTiles() %>%
+  addPolylines(popup = ~LINEARID)
+```
+
+Don't need bay bridge or eastshore freeway, just i-80
+
+```{r}
+#| eval: false
+leaflet(i_505) %>%
+  addTiles() %>%
+  addPolylines(popup = ~LINEARID)
+```
+
+
+```{r}
+# lol nope, no intersection
+st_intersection(i_80, i_505)
+```
+
+```{r}
+#| eval: false
+crop_opt(i_80, 
+         ymax = get_bbox_val(st_bbox(i_505), "ymin")) %>%
+  leaflet() %>%
+  addTiles() %>%
+  addPolylines(popup = ~LINEARID) %>%
+  addPolylines(data = i_505)
+```
+
+```{r}
+i_80_trip <- 
+  crop_opt(i_80, 
+           ymax = get_bbox_val(st_bbox(i_505), "ymin")) 
+```
+
+
+```{r}
+#| eval: false
+st_intersection(i_5, i_505) %>%
+  leaflet() %>%
+  addTiles() %>%
+  addCircles()
+```
+
+
+```{r}
+#| eval: false
+crop_opt(i_5, 
+         ymin = get_bbox_val(st_bbox(i_505), "ymax")) %>%
+  leaflet() %>%
+  addTiles() %>%
+  addPolylines(popup = ~LINEARID)
+```
+
+
+```{r}
+i_5_trip <- 
+  crop_opt(i_5, 
+           ymin = get_bbox_val(st_bbox(i_505), "ymax")) 
+```
+
+There's a tiny missing segment between i-5 and i-505, fix that here:
+
+```{r}
+p3 <- 
+  i_5_trip %>%
+  filter(LINEARID == "1104270230821") %>%
+  lwgeom::st_startpoint()
+```
+
+```{r}
+p4 <- 
+  i_505 %>%
+  filter(LINEARID == "1104269126728") %>%
+  lwgeom::st_endpoint()
+```
+
+
+
+```{r}
+# weirdly, have to *back*-convert from sfc_POINT to sfg POINT
+# to make a linestring
+missing_segment2 <- 
+  st_linestring(c(st_point(st_coordinates(p3)), 
+                  st_point(st_coordinates(p4)))) %>%
+  st_sfc(crs = st_crs(p3))
+  
+```
+
+Final set of roads!
+
+```{r}
+ca_roads_trip2 <- 
+  bind_rows(
+    hwy_199, 
+    hwy_101_trip, 
+    redwood_trip, 
+    as_tibble(missing_segment), 
+    sonoma_roads_trip2, 
+    rte_1_trip2, 
+    i_80_trip, 
+    i_505, 
+    as_tibble(missing_segment2),
+    i_5_trip, 
+    i_5_scn
+  )
+```
+
+
+```{r}
+ggplot(ca_roads_trip2) + 
+  geom_sf()
+```
+
+The little gap is hidden by SF.
+
+```{r}
+roads_trip <- 
+  bind_rows(
+    wa_roads_trip, 
+    or_roads_trip, 
+    ca_roads_trip2
+  )
+```
+
+```{r}
+ggplot(roads_trip) + 
+  geom_sf()
+```
+
+```{r}
+ggplot(west_coast) +
+  geom_sf(fill = "white") + 
+  geom_sf(data = roads_trip, color = "grey40") + 
+  geom_sf(data = trip_points) + 
+  ggrepel::geom_text_repel(
+    data = trip_points, 
+    aes(label = NAME, geometry = geometry), 
+    stat = "sf_coordinates",
+    size = 2, 
+    min.segment.length = 0, 
+    force = 2, 
+    force_pull = .5
+  ) + 
+  coord_sf(
+    crs = 'EPSG:32610', # UTM 10 North
+  ) + 
+  theme_bw()
+```
+
+
+## Parks
+
+parks: 
+
+- Redwood National Park
+- Humboldt Redwoods State Park
+- (Tilden Regional Park)
+- Faery Falls => just download lat/lon
+
+national parks:
+
+https://irma.nps.gov/DataStore/Reference/Profile/2224545?lnv=True
+
+CA state parks: 
+
+https://www.parks.ca.gov/?page_id=29682
+
+
+```{r}
+nps <- read_sf("data/nps/Administrative_Boundaries of_National Park_System_Units/")
+```
+
+```{r}
+redwood_np <-
+  nps %>%
+  filter(UNIT_NAME == "Redwood National Park")
+
+redwood_np %>%
+  # st_simplify(dTolerance = 100) %>%
+  ggplot() + 
+  geom_sf() + 
+  geom_sf(data = st_centroid(redwood_np))
+```
+
+
+```{r}
+ca_parks <- read_sf("data/parks-ca/ParkBoundaries/")
+```
+
+what are the coordinates here?
+
+```{r}
+ca_parks <- 
+  ca_parks %>%
+  st_transform("NAD83")
+```
+
+
+```{r}
+humboldt_redwoods_sp <- 
+  ca_parks %>%
+  filter(UNITNAME == "Humboldt Redwoods SP")
+
+humboldt_redwoods_sp <- st_make_valid(humboldt_redwoods_sp)
+```
+
+https://github.com/r-spatial/sf/issues/1762
+
+```{r}
+humboldt_redwoods_sp %>%
+  ggplot() + 
+  geom_sf() + 
+  geom_sf(data = st_centroid(humboldt_redwoods_sp))
+```
+
+Faery Falls, according to Google: 41.2613° N, 122.3353° W
+
+```{r}
+faery_falls <- 
+  st_point(c(-122.3353, 41.2613)) %>%
+  st_sfc(crs = st_crs(west_coast)) 
+
+faery_falls <- st_sf(tibble(NAME = "Faery Falls", geometry = faery_falls))
+
+```
+
+```{r}
+trip_parks <- 
+  bind_rows(
+    select(redwood_np, NAME = UNIT_NAME, geometry), 
+    select(humboldt_redwoods_sp, NAME = UNITNAME, geometry)
+  )
+```
+
+parks + cities: 
+
+```{r}
+trip_points2 <-
+  trip_points %>%
+  bind_rows(st_centroid(trip_parks)) %>%
+  bind_rows(faery_falls)
+```
+
+
+```{r}
+ggplot(west_coast) +
+  geom_sf(fill = "white") + 
+  geom_sf(data = trip_parks, fill = "transparent") + 
+  geom_sf(data = roads_trip, color = "grey40") + 
+  geom_sf(data = trip_points2) + 
+  ggrepel::geom_text_repel(
+    data = trip_points2, 
+    aes(label = NAME, geometry = geometry), 
+    stat = "sf_coordinates",
+    size = 2, 
+    min.segment.length = 0, 
+    force = 2, 
+    force_pull = .5
+  ) + 
+  # geom_sf_label(data = trip_places, aes(label = NAME), size = 2) + 
+  coord_sf(
+    crs = 'EPSG:32610', # UTM 10 North
+    # xlim = c(bbox$xmin - 5, bbox$xmax)
+  ) + 
+  theme_bw()
+```
+
+## Labels
+
+bold? underline? places I stayed overnight => bold.
+
+```{r}
+overnight <- 
+  c(
+    "Seattle", 
+    "Klamath", # "Requa",
+    "Eureka", 
+    "Guerneville", 
+    "San Francisco", 
+    "Berkeley", 
+    "Ashland", 
+    "Portland"
+  )
+
+trip_points3 <- 
+  trip_points2 %>%
+  mutate(overnight = NAME %in% overnight, 
+         endpoints = NAME %in% c("Seattle", "San Francisco")) %>%
+  mutate(style = ifelse(overnight, "bold", "italic"))
+
+```
+
+Or I could do the fancy points for just the places at the ends => yes
+
+```{r}
+transformed_bounds <- st_bbox(st_transform(west_coast, crs = 'EPSG:32610'))
+
+ggplot(west_coast) +
+  geom_sf(fill = "white") + 
+  # geom_sf(data = trip_parks, fill = "transparent") + 
+  geom_sf(data = roads_trip, color = "grey40") + 
+  geom_sf(data = filter(trip_points3, !endpoints), 
+          size = .75) + 
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = 1.5) +
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = 1, color = "white") + 
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = .5) + 
+  ggrepel::geom_text_repel(
+    data = trip_points3,
+    aes(label = NAME, geometry = geometry, fontface = style),
+    # fontface = "bold",
+    stat = "sf_coordinates",
+    size = 2,
+    min.segment.length = 0,
+    force = 2,
+    force_pull = .5
+  ) +
+  # geom_sf_text(data = sf_pt, label = expression(underline(San~Francisco)), size = 2) + 
+  # geom_sf_label(data = trip_places, aes(label = NAME), size = 2) + 
+  # scale_shape_manual(values = c(1, 16)) + 
+  coord_sf(
+    crs = 'EPSG:32610', # UTM 10 North
+    xlim = c(transformed_bounds[1] - 500000, transformed_bounds[3]), 
+    ylim = c(transformed_bounds[2], transformed_bounds[4])
+    # lims_method = "box"
+  ) + 
+  ggthemes::theme_map()
+```
+
+Better to zoom in on the route:
+
+```{r}
+ggplot(west_coast) +
+  geom_sf(fill = "white") + 
+  # geom_sf(data = trip_parks, fill = "transparent") + 
+  geom_sf(data = roads_trip, color = "grey40") + 
+  geom_sf(data = filter(trip_points3, !endpoints), 
+          size = .75) + 
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = 1.5) +
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = 1, color = "white") + 
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = .5) + 
+  ggrepel::geom_text_repel(
+    data = trip_points3,
+    aes(label = NAME, geometry = geometry, fontface = style),
+    # fontface = "bold",
+    stat = "sf_coordinates",
+    size = 2,
+    min.segment.length = 0,
+    force = 2,
+    force_pull = .5
+  ) +
+  coord_sf(
+    crs = 'EPSG:32610', # UTM 10 North
+    xlim = c(transformed_bounds[1] - 200000, transformed_bounds[3] - 500000), 
+    ylim = c(transformed_bounds[2] + 500000, transformed_bounds[4] - 100000)
+  ) + 
+  labs(x = NULL, y = NULL) + 
+  theme_bw() + 
+  theme(axis.text = element_blank(), 
+        axis.ticks = element_blank(), 
+        panel.grid = element_blank())
+```
+
+
+For text positions, adjust manually based on which side I want them to be on.
+
+And I guess add lines with segment? => yes.
+
+```{r}
+trip_labels <- 
+  trip_points3 %>%
+  st_transform(crs = 'EPSG:32610') %>%
+  mutate(coords = st_coordinates(geometry), 
+         X = coords[, "X"], 
+         Y = coords[, "Y"]) %>%
+  select(-coords)
+```
+
+```{r}
+trip_labels %>%
+  as_tibble() %>%
+  select(NAME, X, Y)
+```
+
+span X = 648747.3
+span Y = 1229607
+
+```{r}
+mod_labels <- 
+  tribble(~NAME, ~mod_X, ~mod_Y, ~hjust, 
+    "Seattle", 20000, 0, 0, 
+    "Vancouver", -20000, 10000, 1, 
+    "Grants Pass", -20000, 15000, 1, 
+    "Klamath", -30000, 10000, 1, 
+    "Redwood National Park", -30000, -10000, 1, 
+    "Eureka", -20000, 20000, 1, 
+    "Humboldt Redwoods SP", -20000, -30000, 1, 
+    "Healdsburg", -30000, 20000, 1, 
+    "Guerneville", -30000, -5000, 1, 
+    "Stinson Beach", -30000, -5000, 1, 
+    "San Francisco", -20000, -50000, .5, 
+    "Berkeley", 10000, 0, 0, 
+    "Faery Falls", 10000, 0, 0, 
+    "Ashland", 15000, 0, 0, 
+    "Eugene", 15000, 0, 0, 
+    "Portland", 5000, -20000, 0, 
+    "Olympia", 5000, -15000, 0 
+  )
+
+trip_labels2 <- 
+  trip_labels %>%
+  left_join(mod_labels, by = "NAME") %>%
+  mutate(X = X + mod_X, 
+         Y = Y + mod_Y)
+
+trip_label_segs <- 
+  trip_labels %>%
+  left_join(mod_labels, by = "NAME") %>%
+  mutate(X_end = X + mod_X, 
+         Y_end = Y + mod_Y) %>%
+  filter(NAME %in% c(
+    "Klamath", 
+    "Redwood National Park", 
+    "Eureka", 
+    "Humboldt Redwoods SP", 
+    "Healdsburg", 
+    "Guerneville",
+    "Stinson Beach", 
+    "San Francisco"
+  )) %>%
+  mutate(X_end = ifelse(X_end < X, X_end + 4000, X_end - 4000), 
+         Y_end = ifelse(Y_end < Y, Y_end + 4000, Y_end - 4000)) 
+
+ggplot(west_coast) +
+  geom_sf(fill = "white") + 
+  geom_segment(data = trip_label_segs, 
+               aes(x = X, y = Y, xend = X_end, yend = Y_end), 
+               lineend = "round", 
+               color = "grey40", 
+               linewidth = .3) +
+  geom_sf(data = roads_trip, color = "grey40") + 
+  geom_sf(data = filter(trip_points3, !endpoints), 
+          size = .75) + 
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = 1.5) +
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = 1, color = "white") + 
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = .5) + 
+  geom_text(data = trip_labels2,
+            aes(label = NAME, x = X, y = Y, hjust = hjust, fontface = style),
+            size = 2) +
+  coord_sf(
+    crs = 'EPSG:32610', # UTM 10 North
+    xlim = c(transformed_bounds[1] - 230000, transformed_bounds[3] - 500000), 
+    ylim = c(transformed_bounds[2] + 500000, transformed_bounds[4] - 100000)
+  ) + 
+  labs(x = NULL, y = NULL) + 
+  theme_bw() + 
+  theme(axis.text = element_blank(), 
+        axis.ticks = element_blank(), 
+        panel.grid = element_blank(), 
+        panel.border = element_rect(linewidth = 1, color = "grey20"))
+```
+
+hjust is an aesthetic, so I can set it! 1 going, 0 coming back, .5 for SF
+
+```{r}
+# repeat, save object
+west_coast_trip_map <- 
+  ggplot(west_coast) +
+  geom_sf(fill = "white") + 
+  geom_segment(data = trip_label_segs, 
+               aes(x = X, y = Y, xend = X_end, yend = Y_end), 
+               lineend = "round", 
+               color = "grey40", 
+               linewidth = .3) +
+  geom_sf(data = roads_trip, color = "grey40") + 
+  geom_sf(data = filter(trip_points3, !endpoints), 
+          size = .75) + 
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = 1.5) +
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = 1, color = "white") + 
+  geom_sf(data = filter(trip_points3, endpoints), 
+          size = .5) + 
+  geom_text(data = trip_labels2,
+            aes(label = NAME, x = X, y = Y, hjust = hjust, fontface = style),
+            size = 2) +
+  coord_sf(
+    crs = 'EPSG:32610', # UTM 10 North
+    xlim = c(transformed_bounds[1] - 230000, transformed_bounds[3] - 500000), 
+    ylim = c(transformed_bounds[2] + 500000, transformed_bounds[4] - 100000)
+  ) + 
+  labs(x = NULL, y = NULL) + 
+  theme_bw() + 
+  theme(axis.text = element_blank(), 
+        axis.ticks = element_blank(), 
+        panel.grid = element_blank(),  
+        panel.border = element_rect(linewidth = 1, color = "grey20"))
+
+ggsave(filename = "west_coast_trip_map.png", 
+       plot = west_coast_trip_map, 
+       width = 1080, 
+       height = 1350,
+       units = "px")
+```
